@@ -1,0 +1,84 @@
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=/root/.m2/repository"              # 指定maven本地库路径，配合7.2.4中的配置避免每次拉镜像
+  DOCKER_DRIVER: overlay2                                            # 用overlay2优化性能
+  PROJECT_NAME: $CI_PROJECT_NAME
+  DC_URI: $DH_REPO$CI_COMMIT_REF_NAME/$CI_PROJECT_NAME:$CI_COMMIT_SHA  # docker项目全路径 docker
+  K8S_IMAGE: $DH_REPO$CI_COMMIT_REF_NAME/kubectl:1.11.0         # k8s发布镜像
+
+stages:
+  - build-stage
+  - deploy-develop
+  - deploy-staging
+  - deploy-release
+
+#三个环境编译
+maven-build:
+  stage: build-stage                                                 # 此标签要与上面stages里所列
+  script:
+    - mvn package -B -DskipTests                                       # 跳过测试节省时间
+    - mv target/$PROJECT_NAME*.jar target/app.jar                      # 打好的包重命名为app.jar
+    - docker login -u $USERNAME -p $PASSWORD $DH_REPO/$CI_COMMIT_REF_NAME                  # 登录私有仓库
+    - docker build -t $DC_URI .                                        # 生成docker镜像
+    - docker push $DC_URI                                              # 提交到镜像库
+  tags:
+    - shared-runner-develop                               # 此tags与注册runner的tags对应
+  artifacts:
+    paths:
+      - ./*.yaml                                                       # 输出Deployment.yaml和Service.yaml供下一阶段的kubectl发布用
+
+#测试环境发布
+k8s-deploy-develop:
+  stage: deploy-develop                                              # 此标签要与上面stages里所列对应
+  image:
+    name: $K8S_IMAGE                                                 # 使用9.2节中准备的kubectl客户端镜像
+    entrypoint: [""]                                                 # 覆盖原镜像的entrypoint，要不然会直接退出
+  script:
+    - K8S_NAMESPACE=$CI_COMMIT_REF_NAME
+    - sed -i "s|{CI_PROJECT_NAME}|$PROJECT_NAME|g" Deployment.yaml     # 替换变量
+    - sed -i "s|{DOCKER_IMAGE}|$DC_URI|g" Deployment.yaml
+    - sed -i "s|{K8S_NAMESPACE}|$K8S_NAMESPACE|g" Deployment.yaml
+    - sed -i "s|{REPLICAS}|1|g" Deployment.yaml
+    - sed -i "s|{FILEBEAT_IMAGE}|$FILEBEAT_IMAGE|g" Deployment.yaml
+    - kubectl apply -f Deployment.yaml --record                        #  发布应用到k8s集群里面
+  tags:
+    - shared-runner-develop                                      # 此tags与注册runner的tags对应
+  only:
+    - develop
+
+#预发布环境发布
+k8s-deploy-staging:
+  stage: deploy-staging
+  image:
+    name: $K8S_IMAGE
+    entrypoint: [""]
+  script:
+    - K8S_NAMESPACE=$CI_COMMIT_REF_NAME
+    - sed -i "s|{CI_PROJECT_NAME}|$PROJECT_NAME|g" Deployment.yaml
+    - sed -i "s|{DOCKER_IMAGE}|$DC_URI|g" Deployment.yaml
+    - sed -i "s|{K8S_NAMESPACE}|$K8S_NAMESPACE|g" Deployment.yaml
+    - sed -i "s|{REPLICAS}|1|g" Deployment.yaml
+    - sed -i "s|{FILEBEAT_IMAGE}|$FILEBEAT_IMAGE|g" Deployment.yaml
+    - kubectl apply -f Deployment.yaml --record
+  tags:
+    - shared-runner-staging
+  only:
+    - staging
+
+#线上环境发布
+k8s-deploy-release:
+  stage: deploy-release
+  image:
+    name: $K8S_IMAGE
+    entrypoint: [""]
+  script:
+    - K8S_NAMESPACE=release
+    - sed -i "s|{CI_PROJECT_NAME}|$PROJECT_NAME|g" Deployment.yaml
+    - sed -i "s|{DOCKER_IMAGE}|$DC_URI|g" Deployment.yaml
+    - sed -i "s|{K8S_NAMESPACE}|$K8S_NAMESPACE|g" Deployment.yaml
+    - sed -i "s|{REPLICAS}|2|g" Deployment.yaml
+    - sed -i "s|{FILEBEAT_IMAGE}|$FILEBEAT_IMAGE|g" Deployment.yaml
+    - kubectl apply -f Deployment.yaml --record
+  tags:
+    - shared-runner-release
+  only:
+    - release

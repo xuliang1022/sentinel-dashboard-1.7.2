@@ -1,0 +1,37 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: {CI_PROJECT_NAME}
+  namespace: {K8S_NAMESPACE}
+spec:
+  replicas: {REPLICAS}
+  template:
+    metadata:
+      labels:
+        app: {CI_PROJECT_NAME}-label
+    spec:
+#      imagePullSecrets:
+#        - name: default-token-b2kt8
+      containers:
+      - name: {CI_PROJECT_NAME}
+        #每次拉取镜
+        imagePullPolicy: Always
+        image: {DOCKER_IMAGE}
+        ports:
+        - containerPort: 8080
+          hostPort: 8080
+          protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {CI_PROJECT_NAME}
+  namespace: {K8S_NAMESPACE}
+spec:
+  selector:
+    app: {CI_PROJECT_NAME}-label
+  type: LoadBalancer
+  ports:
+  - port: 8080
+    targetPort: 8080
